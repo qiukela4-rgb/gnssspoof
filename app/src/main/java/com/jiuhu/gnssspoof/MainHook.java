@@ -27,6 +27,8 @@ public class MainHook implements IXposedHookLoadPackage {
     private static SvTableGenerator.Config sConfig;
     private static long sConfigAt;
     private static boolean sEnabled = true;
+    /** 模块界面写入的配置；首次读取时才创建。 */
+    private static Object sPrefs;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -159,20 +161,61 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 读一次配置并缓存，3 秒内不重复读属性——钩子可能一秒被调上百次。 */
+    /** 读一次配置并缓存，3 秒内不重复读——钩子可能一秒被调上百次。 */
     private static void refreshConfigIfNeeded() {
         long now = System.currentTimeMillis();
         if (sConfig != null && now - sConfigAt < 3000) {
             return;
         }
         SvTableGenerator.Config c = new SvTableGenerator.Config();
-        c.fixedCount = getIntProp("debug.gnssspoof.svcount", 0);
-        c.svMin = getIntProp("debug.gnssspoof.svmin", c.svMin);
-        c.svMax = getIntProp("debug.gnssspoof.svmax", c.svMax);
-        c.fixCount = getIntProp("debug.gnssspoof.fixcount", c.fixCount);
+
+        // 优先读模块界面写入的 SharedPreferences；读不到再退回系统属性。
+        // 这样两种调整方式都能用：点界面、或者 adb setprop。
+        boolean fromPrefs = readPrefs(c);
+        if (!fromPrefs) {
+            c.fixedCount = getIntProp("debug.gnssspoof.svcount", 0);
+            c.svMin = getIntProp("debug.gnssspoof.svmin", c.svMin);
+            c.svMax = getIntProp("debug.gnssspoof.svmax", c.svMax);
+            c.fixCount = getIntProp("debug.gnssspoof.fixcount", c.fixCount);
+            sEnabled = getIntProp("debug.gnssspoof.enable", 1) != 0;
+        }
+
         sConfig = c;
-        sEnabled = getIntProp("debug.gnssspoof.enable", 1) != 0;
         sConfigAt = now;
+    }
+
+    /**
+     * 从模块的 SharedPreferences 读取配置。
+     *
+     * @return true 表示读到了；false 表示尚未配置过或读取失败，调用方应回退到系统属性。
+     */
+    private static boolean readPrefs(SvTableGenerator.Config c) {
+        try {
+            de.robv.android.xposed.XSharedPreferences prefs;
+            if (sPrefs == null) {
+                prefs = new de.robv.android.xposed.XSharedPreferences(
+                        "com.jiuhu.gnssspoof", "gnssspoof");
+                prefs.makeWorldReadable();
+                sPrefs = prefs;
+                setProp("debug.gnssspoof.pref_ok", "1");
+            } else {
+                prefs = (de.robv.android.xposed.XSharedPreferences) sPrefs;
+            }
+            prefs.reload();
+            if (!prefs.contains("svmin")) {
+                return false;   // 用户还没在界面上保存过
+            }
+            int mode = prefs.getInt("mode", 0);
+            c.fixedCount = mode == 1 ? prefs.getInt("svcount", 67) : 0;
+            c.svMin = prefs.getInt("svmin", c.svMin);
+            c.svMax = prefs.getInt("svmax", c.svMax);
+            c.fixCount = prefs.getInt("fixcount", c.fixCount);
+            sEnabled = prefs.getInt("enable", 1) != 0;
+            return true;
+        } catch (Throwable t) {
+            setProp("debug.gnssspoof.pref_err", shortErr(t));
+            return false;
+        }
     }
 
     /** 是否启用伪造。`enable=0` 表示完全透传真实数据。 */

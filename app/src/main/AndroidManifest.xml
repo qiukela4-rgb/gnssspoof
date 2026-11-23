@@ -14,6 +14,17 @@
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
+
+        <!-- 配置界面：点开模块图标即可调参数，不必再借助 adb -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="GnssSpoof 设置">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 
 </manifest>
