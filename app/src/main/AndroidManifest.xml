@@ -8,6 +8,8 @@
 
     <application
         android:label="GnssSpoof"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:supportsRtl="true">
         <meta-data
