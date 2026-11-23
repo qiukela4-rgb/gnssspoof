@@ -286,7 +286,12 @@ public class MainActivity extends Activity {
                             ok ? "已保存，3 秒内生效" : "已保存，但写系统属性失败（需要授予 root 权限）",
                             Toast.LENGTH_LONG).show();
                 }
-                refreshStatus();
+                // 钩子侧有 3 秒配置缓存，立刻刷新读到的还是旧状态，
+                // 所以先显示一次「待生效」提示，再等缓存过期后刷新。
+                tvStatus.setText(ok
+                        ? "配置已写入，等待钩子重新读取（约 3 秒）…\n刷新后即为新状态。"
+                        : "写入失败，状态未改变。");
+                tvStatus.postDelayed(this::refreshStatus, 1600);
             });
         }).start();
     }
@@ -320,22 +325,67 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "已恢复默认", Toast.LENGTH_SHORT).show();
     }
 
-    /** 读系统属性，展示模块在 system_server 里的实际状态。 */
+    /**
+     * 读系统属性，展示模块在 system_server 里的实际状态。
+     *
+     * <p>注意区分两件事：**模块是否注入**（与开关无关，注入后一直挂着）和
+     * **当前是否在伪造**（由开关决定）。开关关闭时钩子会直接跳过，
+     * 不再写 svcount_live 等属性，残留的旧值不能当成当前值展示。
+     */
     private void refreshStatus() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("注入 system_server : ").append(flag(readProp("debug.gnssspoof.injected"))).append('\n');
-        sb.append("分发替换通道       : ").append(flag(readProp("debug.gnssspoof.hooked1"))).append('\n');
-        sb.append("序列化拦截通道     : ").append(flag(readProp("debug.gnssspoof.hooked2"))).append('\n');
-        sb.append("主动推送通道       : ").append(flag(readProp("debug.gnssspoof.hooked3"))).append('\n');
-        sb.append("编码常量           : ").append(nz(readProp("debug.gnssspoof.const_ok"))).append('\n');
+        boolean enabled = ConfigStore.enabled();
 
-        String live = readProp("debug.gnssspoof.svcount_live");
-        sb.append("当前实际颗数       : ").append(nz(live)).append('\n');
+        StringBuilder sb = new StringBuilder();
+        if (enabled) {
+            sb.append("伪造开关 : 已启用").append('\n');
+        } else {
+            sb.append("伪造开关 : 已关闭 —— 系统当前使用真实数据").append('\n');
+        }
+
+        String injected = readProp("debug.gnssspoof.injected");
+        sb.append("模块注入 : ").append("1".equals(injected) ? "已注入 system_server" : "未生效").append('\n');
+
+        int hooked = 0;
+        for (String key : new String[]{
+                "debug.gnssspoof.hooked1",
+                "debug.gnssspoof.hooked2",
+                "debug.gnssspoof.hooked3"}) {
+            if ("1".equals(readProp(key))) {
+                hooked++;
+            }
+        }
+        sb.append("通道挂载 : ").append(hooked).append("/3")
+                .append(hooked == 3 ? "（分发替换·序列化拦截·主动推送）" : "").append('\n');
+
+        sb.append("编码常量 : ").append(nz(readProp("debug.gnssspoof.const_ok"))).append('\n');
+
+        if (enabled) {
+            String live = readProp("debug.gnssspoof.svcount_live");
+            sb.append("伪造颗数 : ").append(nz(live)).append(" 颗（本模块写入，不是真实值）").append('\n');
+            sb.append("最近刷新 : ").append(formatTime(readProp("debug.gnssspoof.w2p"))).append('\n');
+        } else {
+            sb.append("伪造颗数 : 不写入（开关关闭，钩子不介入）").append('\n');
+        }
 
         String errs = collectErrors();
-        sb.append("异常               : ").append(errs.isEmpty() ? "无" : errs);
+        sb.append("异常     : ").append(errs.isEmpty() ? "无" : errs).append('\n');
+        sb.append("真实颗数 : 到「真实检测」页采样");
 
         tvStatus.setText(sb.toString());
+    }
+
+    /** 毫秒时间戳 → HH:mm:ss；空值显示破折号。 */
+    private String formatTime(String millis) {
+        if (millis == null || millis.isEmpty()) {
+            return "—";
+        }
+        try {
+            long v = Long.parseLong(millis.trim());
+            return new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date(v));
+        } catch (Throwable t) {
+            return "—";
+        }
     }
 
     /** 汇总所有 *_err 属性，非空就说明某条通道出了问题。 */
@@ -358,13 +408,6 @@ public class MainActivity extends Activity {
             }
         }
         return sb.toString();
-    }
-
-    private String flag(String v) {
-        if (v == null || v.isEmpty()) {
-            return "未生效";
-        }
-        return "1".equals(v) ? "正常" : v;
     }
 
     private String nz(String v) {
