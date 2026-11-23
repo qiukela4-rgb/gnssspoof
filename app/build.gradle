@@ -2,21 +2,57 @@ plugins {
     id 'com.android.application'
 }
 
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+def keystoreFields = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword']
+def keystoreProperties = new Properties()
+def keystoreMissingFields = []
+
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+    keystoreMissingFields = keystoreFields.findAll { !keystoreProperties.getProperty(it)?.trim() }
+}
+
+def releaseTaskRequested = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+
+if (!keystoreMissingFields.isEmpty()) {
+    if (releaseTaskRequested) {
+        throw new GradleException("keystore.properties 缺少必填字段: " + keystoreMissingFields.join(', '))
+    }
+    logger.warn("[GnssSpoof] keystore.properties 缺少字段 " + keystoreMissingFields.join(', ') + "，已跳过 release 签名")
+}
+
+def keystoreConfigured = keystorePropertiesFile.exists() && keystoreMissingFields.isEmpty()
+
 android {
     namespace 'com.jiuhu.gnssspoof'
     compileSdk 35
 
     defaultConfig {
         applicationId "com.jiuhu.gnssspoof"
-        minSdk 26
+        // minSdk 31: 依赖 Android 12 起提供的 GnssStatusProvider
+        minSdk 31
         targetSdk 35
         versionCode 1
         versionName "1.0"
     }
 
+    signingConfigs {
+        if (keystoreConfigured) {
+            release {
+                storeFile rootProject.file(keystoreProperties.getProperty('storeFile'))
+                storePassword keystoreProperties.getProperty('storePassword')
+                keyAlias keystoreProperties.getProperty('keyAlias')
+                keyPassword keystoreProperties.getProperty('keyPassword')
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
+            if (keystoreConfigured) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 

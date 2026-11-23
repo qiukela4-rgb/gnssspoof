@@ -10,6 +10,7 @@ app/build/
 
 # 本地配置（含 SDK 路径，不入库）
 local.properties
+keystore.properties
 
 # APK（走 GitHub Release 发布）
 *.apk
