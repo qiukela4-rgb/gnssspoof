@@ -51,6 +51,7 @@ public class MainActivity extends Activity {
     private SeekBar sbMax;
     private TextView tvFix;
     private SeekBar sbFix;
+    private TextView tvWarning;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -73,6 +74,7 @@ public class MainActivity extends Activity {
         sbMax = findViewById(R.id.sbMax);
         tvFix = findViewById(R.id.tvFix);
         sbFix = findViewById(R.id.sbFix);
+        tvWarning = findViewById(R.id.tvWarning);
 
         loadValues();
         bindListeners();
@@ -98,21 +100,61 @@ public class MainActivity extends Activity {
         sbFix.setProgress(clamp(prefs.getInt("fixcount", DEF_FIX), 0, FIX_MAX));
 
         updateLabels();
+        updateWarning();
     }
 
     private void bindListeners() {
         rgMode.setOnCheckedChangeListener((group, checkedId) -> {
-            if (checkedId == R.id.rbFixed) {
-                applyModeVisibility(1);
-            } else {
-                applyModeVisibility(0);
+            applyModeVisibility(checkedId == R.id.rbFixed ? 1 : 0);
+            updateWarning();
+        });
+
+        // 三个滑块各用一个监听器：上下限需要互相约束，参与定位只影响提示
+        sbMin.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                // 下限被拖到上限之上时，把上限一起顶上去，避免出现「下限 80 / 上限 50」这种矛盾状态
+                if (fromUser && progress > sbMax.getProgress()) {
+                    sbMax.setProgress(progress);
+                }
+                updateLabels();
+                updateWarning();
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
             }
         });
 
-        SeekBar.OnSeekBarChangeListener listener = new SeekBar.OnSeekBarChangeListener() {
+        sbMax.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                // 反向同理：上限被拖到下限之下时，把下限一起压下来
+                if (fromUser && progress < sbMin.getProgress()) {
+                    sbMin.setProgress(progress);
+                }
+                updateLabels();
+                updateWarning();
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+            }
+        });
+
+        SeekBar.OnSeekBarChangeListener simple = new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 updateLabels();
+                updateWarning();
             }
 
             @Override
@@ -123,14 +165,68 @@ public class MainActivity extends Activity {
             public void onStopTrackingTouch(SeekBar seekBar) {
             }
         };
-        sbFixed.setOnSeekBarChangeListener(listener);
-        sbMin.setOnSeekBarChangeListener(listener);
-        sbMax.setOnSeekBarChangeListener(listener);
-        sbFix.setOnSeekBarChangeListener(listener);
+        sbFixed.setOnSeekBarChangeListener(simple);
+        sbFix.setOnSeekBarChangeListener(simple);
 
         findViewById(R.id.btnSave).setOnClickListener(v -> save(true));
         findViewById(R.id.btnReset).setOnClickListener(v -> resetDefaults());
         findViewById(R.id.btnRefresh).setOnClickListener(v -> refreshStatus());
+    }
+
+    /**
+     * 检查参数是否落在一个「真实的接收机可能出现」的范围内，不合理就亮出来。
+     *
+     * <p>这里不做强制限制——使用者仍然可以设成任意值，但界面会明确告诉他会出什么效果。
+     * 依据：真实手机在开阔地多星座合计 60–80 颗、室内 30 上下；少于 4 颗无法解算位置。
+     */
+    private void updateWarning() {
+        if (tvWarning == null) {
+            return;
+        }
+        int min = sbMin.getProgress() + 1;
+        int max = sbMax.getProgress() + 1;
+        int fix = sbFix.getProgress();
+        int fixed = sbFixed.getProgress() + 1;
+        boolean fixedMode = rbFixed.isChecked();
+
+        StringBuilder sb = new StringBuilder();
+        if (fixedMode) {
+            if (fixed < 20) {
+                append(sb, "固定 " + fixed + " 颗偏少：真实环境室内也有 30 上下，少于 4 颗无法解算位置");
+            } else if (fixed > 100) {
+                append(sb, "固定 " + fixed + " 颗偏多：开阔地通常 60–80 颗，超过 100 已超出常见接收机能力");
+            }
+            if (fix > fixed) {
+                append(sb, "参与定位 " + fix + " 颗大于总数 " + fixed + "：实际会按总数处理");
+            }
+        } else {
+            if (min < 20) {
+                append(sb, "下限 " + min + " 颗偏低：真实环境室内也有 30 上下，谷底时会明显不真实");
+            }
+            if (max > 100) {
+                append(sb, "上限 " + max + " 颗偏高：开阔地通常 60–80 颗，超过 100 已超出常见接收机能力");
+            }
+            if (max - min < 10) {
+                append(sb, "波动幅度只有 " + (max - min) + " 颗，几乎看不出卫星进出");
+            }
+            if (fix > min) {
+                append(sb, "参与定位 " + fix + " 颗超过下限 " + min + "：波动到谷底时会全部标记为参与定位");
+            }
+        }
+
+        if (sb.length() == 0) {
+            tvWarning.setVisibility(View.GONE);
+        } else {
+            tvWarning.setText(sb.toString());
+            tvWarning.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void append(StringBuilder sb, String line) {
+        if (sb.length() > 0) {
+            sb.append('\n');
+        }
+        sb.append("· ").append(line);
     }
 
     private void applyModeVisibility(int mode) {
