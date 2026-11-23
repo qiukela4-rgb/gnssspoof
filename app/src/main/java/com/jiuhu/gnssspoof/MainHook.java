@@ -14,6 +14,13 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String TAG = "[GnssSpoof]";
     private static final int FAKE_SV_COUNT = 8;
 
+    private static final float CN0_BASE = 32.0f;
+    private static final float CN0_STEP = 1.0f;
+    private static final int CN0_PERIOD = 7;
+    private static final float ELEVATION = 45.0f;
+    private static final float AZIMUTH_STEP = 22.5f;
+    private static final float GPS_L1_FREQ = 1575.42f;
+
     // svidWithFlags 编码常量（运行时反射读取，带默认值兜底）
     private static int SV_SHIFT = 12;                     // svid 左移位数
     private static int CONST_SHIFT = 8;                   // 星座左移位数
@@ -112,14 +119,21 @@ public class MainHook implements IXposedHookLoadPackage {
                     try {
                         Parcel p = (Parcel) param.args[0];
                         int n = FAKE_SV_COUNT;
+                        int[] svidWithFlags = new int[n];
+                        float[] cn0 = new float[n];
+                        float[] elev = new float[n];
+                        float[] azim = new float[n];
+                        float[] carrierFreq = new float[n];
+                        float[] basebandCn0 = new float[n];
+                        fillFakeArrays(n, svidWithFlags, cn0, elev, azim, carrierFreq, basebandCn0);
                         p.writeInt(n);
                         for (int i = 0; i < n; i++) {
-                            p.writeInt(encodeSvidFlags(i + 1, 1));     // svidWithFlags(GPS)
-                            p.writeFloat(32.0f + (i % 7));             // cn0
-                            p.writeFloat(45.0f);                       // elevation
-                            p.writeFloat((i * 22.5f) % 360.0f);        // azimuth
-                            p.writeFloat(1575.42f);                    // carrier freq
-                            p.writeFloat(32.0f + (i % 7));             // baseband cn0
+                            p.writeInt(svidWithFlags[i]);              // svidWithFlags(GPS)
+                            p.writeFloat(cn0[i]);                      // cn0
+                            p.writeFloat(elev[i]);                     // elevation
+                            p.writeFloat(azim[i]);                     // azimuth
+                            p.writeFloat(carrierFreq[i]);              // carrier freq
+                            p.writeFloat(basebandCn0[i]);              // baseband cn0
                         }
                         param.setResult(null);                         // 跳过原实现
                         setProp("debug.gnssspoof.w2p", String.valueOf(System.currentTimeMillis()));
@@ -139,6 +153,19 @@ public class MainHook implements IXposedHookLoadPackage {
         return (svid << SV_SHIFT) | (constellation << CONST_SHIFT) | FLAGS_FULL;
     }
 
+    private static void fillFakeArrays(int n, int[] svidWithFlags, float[] cn0,
+                                       float[] elev, float[] azim, float[] carrier,
+                                       float[] baseband) {
+        for (int i = 0; i < n; i++) {
+            svidWithFlags[i] = encodeSvidFlags(i + 1, 1);  // GPS svid 1..16
+            cn0[i] = CN0_BASE + (i % CN0_PERIOD) * CN0_STEP;  // 信噪比 32~38
+            elev[i] = ELEVATION;
+            azim[i] = (i * AZIMUTH_STEP) % 360.0f;             // 360.0f 为角度圆周（非可调参数），不参与常量区
+            carrier[i] = GPS_L1_FREQ;
+            baseband[i] = cn0[i];
+        }
+    }
+
     private Object buildFakeGnssStatus() {
         int n = FAKE_SV_COUNT;
         int[] svidWithFlags = new int[n];
@@ -148,14 +175,7 @@ public class MainHook implements IXposedHookLoadPackage {
         float[] carrierFreq = new float[n];
         float[] basebandCn0 = new float[n];
 
-        for (int i = 0; i < n; i++) {
-            svidWithFlags[i] = encodeSvidFlags(i + 1, 1);  // GPS svid 1..16
-            cn0[i] = 32.0f + (i % 7);                      // 信噪比 32~38
-            elev[i] = 45.0f;
-            azim[i] = (i * 22.5f) % 360.0f;
-            carrierFreq[i] = 1575.42f;
-            basebandCn0[i] = cn0[i];
-        }
+        fillFakeArrays(n, svidWithFlags, cn0, elev, azim, carrierFreq, basebandCn0);
 
         return XposedHelpers.callStaticMethod(
                 GnssStatus.class, "wrap",
