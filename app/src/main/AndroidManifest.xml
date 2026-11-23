@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 真实检测页需要读系统 GNSS 状态 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:label="GnssSpoof"
         android:allowBackup="false"
@@ -30,6 +35,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 虚拟检测：显示生成器当前会产出的卫星表 -->
+        <activity
+            android:name=".SimActivity"
+            android:exported="false"
+            android:label="虚拟卫星检测" />
+
+        <!-- 真实检测：临时关闭伪造，采样真实接收机的数据 -->
+        <activity
+            android:name=".RealActivity"
+            android:exported="false"
+            android:label="真实卫星检测" />
     </application>
 
 </manifest>

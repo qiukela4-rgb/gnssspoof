@@ -171,6 +171,10 @@ public class MainActivity extends Activity {
         findViewById(R.id.btnSave).setOnClickListener(v -> save(true));
         findViewById(R.id.btnReset).setOnClickListener(v -> resetDefaults());
         findViewById(R.id.btnRefresh).setOnClickListener(v -> refreshStatus());
+        findViewById(R.id.btnSim).setOnClickListener(v ->
+                startActivity(new android.content.Intent(this, SimActivity.class)));
+        findViewById(R.id.btnReal).setOnClickListener(v ->
+                startActivity(new android.content.Intent(this, RealActivity.class)));
     }
 
     /**
