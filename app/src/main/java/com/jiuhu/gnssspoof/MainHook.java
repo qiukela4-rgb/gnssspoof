@@ -148,16 +148,11 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    // 正确编码 svidWithFlags：svid<<SV_SHIFT | constellation<<CONST_SHIFT | flags
-    private static int encodeSvidFlags(int svid, int constellation) {
-        return (svid << SV_SHIFT) | (constellation << CONST_SHIFT) | FLAGS_FULL;
-    }
-
     private static void fillFakeArrays(int n, int[] svidWithFlags, float[] cn0,
                                        float[] elev, float[] azim, float[] carrier,
                                        float[] baseband) {
         for (int i = 0; i < n; i++) {
-            svidWithFlags[i] = encodeSvidFlags(i + 1, 1);  // GPS svid 1..16
+            svidWithFlags[i] = SvIdCodec.encode(i + 1, 1, SV_SHIFT, CONST_SHIFT, FLAGS_FULL);  // GPS svid 1..16
             cn0[i] = CN0_BASE + (i % CN0_PERIOD) * CN0_STEP;  // 信噪比 32~38
             elev[i] = ELEVATION;
             azim[i] = (i * AZIMUTH_STEP) % 360.0f;             // 360.0f 为角度圆周（非可调参数），不参与常量区
