@@ -19,6 +19,9 @@ keystore.properties
 _db/
 _verify/
 
+# 临时产物目录（截图、拉下来的数据库、一次性脚本，一律不入库）
+scripts/_scratch/
+
 # 系统文件
 Thumbs.db
 .DS_Store
