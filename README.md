@@ -87,8 +87,35 @@ adb shell getprop | grep gnssspoof
 | `debug.gnssspoof.hooked2` | `writeToParcel` 钩子挂载成功 | `1` | `adb shell getprop \| grep gnssspoof` |
 | `debug.gnssspoof.hookerr2` | `writeToParcel` 钩子挂载失败时的异常摘要 | 空（无错误时不存在） | `adb shell getprop \| grep gnssspoof` |
 | `debug.gnssspoof.w2p` | 序列化拦截通道最近一次生效的毫秒时间戳 | 毫秒时间戳，非 0 | `adb shell getprop \| grep gnssspoof` |
+| `debug.gnssspoof.svcount_live` | 最近一次序列化时实际写入的卫星颗数 | 落在 `svmin`–`svmax` 之间 | `adb shell getprop \| grep gnssspoof` |
 
 `*_err` 属性只在对应异常发生时出现；正常设备上不应看到 `const_err` / `provider_err` / `hookerr1` / `hookerr2` / `hookerr3`。
+
+## 卫星数量调节
+
+卫星表由 `SvTableGenerator` 按物理模型生成（仰角球面分布、载噪比随仰角变化、卫星缓慢进出），
+默认在 58–82 颗之间波动。全部参数走系统属性，改完 3 秒内生效，**不需要重启**：
+
+```bash
+# 总开关：0 = 透传真实卫星数据（用于对照），1 = 伪造
+adb shell su -c 'setprop debug.gnssspoof.enable 1'
+
+# 固定颗数（设了就停止波动）
+adb shell su -c 'setprop debug.gnssspoof.svcount 67'
+
+# 波动区间（不设 svcount 时生效）
+adb shell su -c 'setprop debug.gnssspoof.svmin 45'
+adb shell su -c 'setprop debug.gnssspoof.svmax 70'
+
+# 参与定位的卫星颗数（其余仅「看得见」）
+adb shell su -c 'setprop debug.gnssspoof.fixcount 22'
+
+# 查看当前实际颗数
+adb shell getprop debug.gnssspoof.svcount_live
+```
+
+> 真实环境参考：开阔地多星座合计常见 60–80 颗，室内通常只有 30 余颗。
+> 如果在室内使用较多，把区间调到 45–70 更不容易显眼。
 
 ## 免责声明
 

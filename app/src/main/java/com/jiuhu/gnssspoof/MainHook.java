@@ -12,19 +12,21 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class MainHook implements IXposedHookLoadPackage {
 
     private static final String TAG = "[GnssSpoof]";
-    private static final int FAKE_SV_COUNT = 8;
 
-    private static final float CN0_BASE = 32.0f;
-    private static final float CN0_STEP = 1.0f;
-    private static final int CN0_PERIOD = 7;
-    private static final float ELEVATION = 45.0f;
-    private static final float AZIMUTH_STEP = 22.5f;
-    private static final float GPS_L1_FREQ = 1575.42f;
+    // 卫星参数不再在类里写死：数量、星座配比、仰角、载噪比全部由 SvTableGenerator
+    // 按物理模型生成；运行期可通过 debug.gnssspoof.* 系统属性调整（见 README 诊断章节）。
 
     // svidWithFlags 编码常量（运行时反射读取，带默认值兜底）
     private static int SV_SHIFT = 12;                     // svid 左移位数
     private static int CONST_SHIFT = 8;                   // 星座左移位数
     private static int FLAGS_FULL = 0x01 | 0x02 | 0x04 | 0x08; // 星历|历书|使用中|载波
+    /** 「参与定位」标志位的位值，单独存一份，便于把它从部分卫星身上摘掉。 */
+    private static int USED_IN_FIX_BIT = 0x04;
+
+    /** 配置缓存，避免每次钩子调用都去读系统属性。 */
+    private static SvTableGenerator.Config sConfig;
+    private static long sConfigAt;
+    private static boolean sEnabled = true;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -47,6 +49,7 @@ public class MainHook implements IXposedHookLoadPackage {
             int f3 = XposedHelpers.getStaticIntField(GnssStatus.class, "SVID_FLAGS_USED_IN_FIX");
             int f4 = XposedHelpers.getStaticIntField(GnssStatus.class, "SVID_FLAGS_HAS_CARRIER_FREQUENCY");
             FLAGS_FULL = f1 | f2 | f3 | f4;
+            USED_IN_FIX_BIT = f3;
             setProp("debug.gnssspoof.const_ok", SV_SHIFT + "/" + CONST_SHIFT + "/" + FLAGS_FULL);
         } catch (Throwable t) {
             setProp("debug.gnssspoof.const_err", shortErr(t));
@@ -68,6 +71,9 @@ public class MainHook implements IXposedHookLoadPackage {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
                         try {
+                            if (!isSpoofEnabled()) {
+                                return;   // enable=0：放行真实卫星数据
+                            }
                             Object fake = buildFakeGnssStatus();
                             if (fake != null) {
                                 param.args[0] = fake;
@@ -90,6 +96,9 @@ public class MainHook implements IXposedHookLoadPackage {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         try {
+                            if (!isSpoofEnabled()) {
+                                return;   // enable=0：不主动推送
+                            }
                             if (param.args != null && param.args.length > 1
                                     && param.args[1] != null) {
                                 Object listener = param.args[1]; // IGnssStatusListener
@@ -117,26 +126,28 @@ public class MainHook implements IXposedHookLoadPackage {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     try {
+                        if (!isSpoofEnabled()) {
+                            return;                        // enable=0：原实现继续，透传真实数据
+                        }
                         Parcel p = (Parcel) param.args[0];
-                        int n = FAKE_SV_COUNT;
-                        int[] svidWithFlags = new int[n];
-                        float[] cn0 = new float[n];
-                        float[] elev = new float[n];
-                        float[] azim = new float[n];
-                        float[] carrierFreq = new float[n];
-                        float[] basebandCn0 = new float[n];
-                        fillFakeArrays(n, svidWithFlags, cn0, elev, azim, carrierFreq, basebandCn0);
+                        SvTableGenerator.Table table = currentTable();
+                        int n = table.count;
                         p.writeInt(n);
                         for (int i = 0; i < n; i++) {
-                            p.writeInt(svidWithFlags[i]);              // svidWithFlags(GPS)
-                            p.writeFloat(cn0[i]);                      // cn0
-                            p.writeFloat(elev[i]);                     // elevation
-                            p.writeFloat(azim[i]);                     // azimuth
-                            p.writeFloat(carrierFreq[i]);              // carrier freq
-                            p.writeFloat(basebandCn0[i]);              // baseband cn0
+                            int flags = (i < table.usedInFix)
+                                    ? FLAGS_FULL
+                                    : (FLAGS_FULL & ~USED_IN_FIX_BIT);
+                            p.writeInt(SvIdCodec.encode(table.svid[i], table.constellation[i],
+                                    SV_SHIFT, CONST_SHIFT, flags));
+                            p.writeFloat(table.cn0[i]);        // cn0
+                            p.writeFloat(table.elevation[i]);  // elevation
+                            p.writeFloat(table.azimuth[i]);    // azimuth
+                            p.writeFloat(table.carrierFreq[i]); // carrier freq
+                            p.writeFloat(table.cn0[i]);        // baseband cn0 与 cn0 同源
                         }
                         param.setResult(null);                         // 跳过原实现
                         setProp("debug.gnssspoof.w2p", String.valueOf(System.currentTimeMillis()));
+                        setProp("debug.gnssspoof.svcount_live", String.valueOf(n));
                     } catch (Throwable t) {
                         XposedBridge.log(TAG + " w2p failed: " + t);
                     }
@@ -148,21 +159,56 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static void fillFakeArrays(int n, int[] svidWithFlags, float[] cn0,
-                                       float[] elev, float[] azim, float[] carrier,
-                                       float[] baseband) {
-        for (int i = 0; i < n; i++) {
-            svidWithFlags[i] = SvIdCodec.encode(i + 1, 1, SV_SHIFT, CONST_SHIFT, FLAGS_FULL);  // GPS svid 1..8
-            cn0[i] = CN0_BASE + (i % CN0_PERIOD) * CN0_STEP;  // 信噪比 32~38
-            elev[i] = ELEVATION;
-            azim[i] = (i * AZIMUTH_STEP) % 360.0f;             // 360.0f 为角度圆周（非可调参数），不参与常量区
-            carrier[i] = GPS_L1_FREQ;
-            baseband[i] = cn0[i];
+    /** 读一次配置并缓存，3 秒内不重复读属性——钩子可能一秒被调上百次。 */
+    private static void refreshConfigIfNeeded() {
+        long now = System.currentTimeMillis();
+        if (sConfig != null && now - sConfigAt < 3000) {
+            return;
+        }
+        SvTableGenerator.Config c = new SvTableGenerator.Config();
+        c.fixedCount = getIntProp("debug.gnssspoof.svcount", 0);
+        c.svMin = getIntProp("debug.gnssspoof.svmin", c.svMin);
+        c.svMax = getIntProp("debug.gnssspoof.svmax", c.svMax);
+        c.fixCount = getIntProp("debug.gnssspoof.fixcount", c.fixCount);
+        sConfig = c;
+        sEnabled = getIntProp("debug.gnssspoof.enable", 1) != 0;
+        sConfigAt = now;
+    }
+
+    /** 是否启用伪造。`enable=0` 表示完全透传真实数据。 */
+    private static boolean isSpoofEnabled() {
+        refreshConfigIfNeeded();
+        return sEnabled;
+    }
+
+    /** 当前时刻的卫星表。所有通道共用同一份。 */
+    private static SvTableGenerator.Table currentTable() {
+        refreshConfigIfNeeded();
+        return SvTableGenerator.generate(System.currentTimeMillis(), sConfig);
+    }
+
+    /** 读整数型系统属性；未设置或读失败时返回默认值。 */
+    private static int getIntProp(String key, int def) {
+        try {
+            Class<?> sp = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method m = sp.getMethod("get", String.class, String.class);
+            Object raw = m.invoke(null, key, null);
+            if (raw == null) {
+                return def;
+            }
+            String v = String.valueOf(raw).trim();
+            if (v.isEmpty()) {
+                return def;
+            }
+            return Integer.parseInt(v);
+        } catch (Throwable t) {
+            return def;
         }
     }
 
     private Object buildFakeGnssStatus() {
-        int n = FAKE_SV_COUNT;
+        SvTableGenerator.Table table = currentTable();
+        int n = table.count;
         int[] svidWithFlags = new int[n];
         float[] cn0 = new float[n];
         float[] elev = new float[n];
@@ -170,7 +216,18 @@ public class MainHook implements IXposedHookLoadPackage {
         float[] carrierFreq = new float[n];
         float[] basebandCn0 = new float[n];
 
-        fillFakeArrays(n, svidWithFlags, cn0, elev, azim, carrierFreq, basebandCn0);
+        for (int i = 0; i < n; i++) {
+            int flags = (i < table.usedInFix)
+                    ? FLAGS_FULL
+                    : (FLAGS_FULL & ~USED_IN_FIX_BIT);
+            svidWithFlags[i] = SvIdCodec.encode(table.svid[i], table.constellation[i],
+                    SV_SHIFT, CONST_SHIFT, flags);
+            cn0[i] = table.cn0[i];
+            elev[i] = table.elevation[i];
+            azim[i] = table.azimuth[i];
+            carrierFreq[i] = table.carrierFreq[i];
+            basebandCn0[i] = table.cn0[i];
+        }
 
         return XposedHelpers.callStaticMethod(
                 GnssStatus.class, "wrap",
