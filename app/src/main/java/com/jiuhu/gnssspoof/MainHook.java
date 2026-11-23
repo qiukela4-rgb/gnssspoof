@@ -182,6 +182,10 @@ public class MainHook implements IXposedHookLoadPackage {
 
         sConfig = c;
         sConfigAt = now;
+        // 诊断：把最终采用的配置暴露出来，便于判断是读不到还是没设置
+        setProp("debug.gnssspoof.cfg", c.svMin + "/" + c.svMax + "/"
+                + c.fixedCount + "/" + c.fixCount + "/" + (sEnabled ? 1 : 0)
+                + "/" + (fromPrefs ? "prefs" : "props"));
     }
 
     /**
@@ -197,13 +201,15 @@ public class MainHook implements IXposedHookLoadPackage {
                         "com.jiuhu.gnssspoof", "gnssspoof");
                 prefs.makeWorldReadable();
                 sPrefs = prefs;
-                setProp("debug.gnssspoof.pref_ok", "1");
             } else {
                 prefs = (de.robv.android.xposed.XSharedPreferences) sPrefs;
             }
             prefs.reload();
+            // 诊断用：读到了几条键。0 说明代理文件没建好（缺 xposedsharedprefs 声明）
+            java.util.Map<String, ?> all = prefs.getAll();
+            setProp("debug.gnssspoof.pref_size", String.valueOf(all == null ? -1 : all.size()));
             if (!prefs.contains("svmin")) {
-                return false;   // 用户还没在界面上保存过
+                return false;   // 用户还没在界面上保存过，或代理文件为空
             }
             int mode = prefs.getInt("mode", 0);
             c.fixedCount = mode == 1 ? prefs.getInt("svcount", 67) : 0;
@@ -211,6 +217,7 @@ public class MainHook implements IXposedHookLoadPackage {
             c.svMax = prefs.getInt("svmax", c.svMax);
             c.fixCount = prefs.getInt("fixcount", c.fixCount);
             sEnabled = prefs.getInt("enable", 1) != 0;
+            setProp("debug.gnssspoof.pref_ok", "1");
             return true;
         } catch (Throwable t) {
             setProp("debug.gnssspoof.pref_err", shortErr(t));
@@ -230,22 +237,35 @@ public class MainHook implements IXposedHookLoadPackage {
         return SvTableGenerator.generate(System.currentTimeMillis(), sConfig);
     }
 
-    /** 读整数型系统属性；未设置或读失败时返回默认值。 */
+    /**
+     * 读整数型属性。优先读持久化的 {@code persist.gnssspoof.*}（重启后仍在），
+     * 其次读 {@code debug.gnssspoof.*}（adb 临时调整用），都没有则用默认值。
+     */
     private static int getIntProp(String key, int def) {
+        String shortName = key.substring(key.lastIndexOf('.') + 1);
+        String v = getPropRaw("persist.gnssspoof." + shortName);
+        if (v == null || v.isEmpty()) {
+            v = getPropRaw(key);
+        }
+        if (v == null || v.isEmpty()) {
+            return def;
+        }
         try {
-            Class<?> sp = Class.forName("android.os.SystemProperties");
-            java.lang.reflect.Method m = sp.getMethod("get", String.class, String.class);
-            Object raw = m.invoke(null, key, null);
-            if (raw == null) {
-                return def;
-            }
-            String v = String.valueOf(raw).trim();
-            if (v.isEmpty()) {
-                return def;
-            }
-            return Integer.parseInt(v);
+            return Integer.parseInt(v.trim());
         } catch (Throwable t) {
             return def;
+        }
+    }
+
+    /** 原样读一个系统属性，失败返回 null。 */
+    private static String getPropRaw(String key) {
+        try {
+            Class<?> sp = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method m = sp.getMethod("get", String.class);
+            Object raw = m.invoke(null, key);
+            return raw == null ? null : String.valueOf(raw);
+        } catch (Throwable t) {
+            return null;
         }
     }
 

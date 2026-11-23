@@ -14,6 +14,11 @@
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
+        <!-- 声明后 LSPosed 会把 gnssspoof.xml 复制到所有进程可读的代理位置，
+             否则 system_server 里的 XSharedPreferences 读不到内容（SELinux 拦截） -->
+        <meta-data
+            android:name="xposedsharedprefs"
+            android:value="true" />
 
         <!-- 配置界面：点开模块图标即可调参数，不必再借助 adb -->
         <activity

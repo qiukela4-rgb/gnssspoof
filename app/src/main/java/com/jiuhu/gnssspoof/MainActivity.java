@@ -145,7 +145,7 @@ public class MainActivity extends Activity {
         tvFix.setText("参与定位：" + sbFix.getProgress() + " 颗");
     }
 
-    /** 保存到 SharedPreferences。MainHook 会在 3 秒内读到新值。 */
+    /** 保存到 SharedPreferences（供下次打开回显），并通过 root 写系统属性。 */
     private void save(boolean toast) {
         int min = sbMin.getProgress() + 1;
         int max = sbMax.getProgress() + 1;
@@ -167,12 +167,44 @@ public class MainActivity extends Activity {
                 .putInt("svmin", min)
                 .putInt("svmax", max)
                 .putInt("fixcount", sbFix.getProgress())
-                .commit();   // commit 而非 apply：让配置尽快落盘，system_server 才读得到
+                .commit();
 
-        if (toast) {
-            Toast.makeText(this, "已保存，3 秒内生效", Toast.LENGTH_SHORT).show();
+        // 模块实际读取的是系统属性。走 root 直接写，3 秒内生效。
+        // 用 persist. 前缀，重启后配置不会丢。
+        final String[][] props = {
+                {"persist.gnssspoof.enable", swEnable.isChecked() ? "1" : "0"},
+                {"persist.gnssspoof.svcount", String.valueOf(mode == 1 ? sbFixed.getProgress() + 1 : 0)},
+                {"persist.gnssspoof.svmin", String.valueOf(min)},
+                {"persist.gnssspoof.svmax", String.valueOf(max)},
+                {"persist.gnssspoof.fixcount", String.valueOf(sbFix.getProgress())},
+        };
+        new Thread(() -> {
+            final boolean ok = applyProps(props);
+            runOnUiThread(() -> {
+                if (toast) {
+                    Toast.makeText(this,
+                            ok ? "已保存，3 秒内生效" : "已保存，但写系统属性失败（需要授予 root 权限）",
+                            Toast.LENGTH_LONG).show();
+                }
+                refreshStatus();
+            });
+        }).start();
+    }
+
+    /** 通过 su 批量写系统属性。返回是否全部成功。 */
+    private boolean applyProps(String[][] props) {
+        StringBuilder cmd = new StringBuilder();
+        for (String[] p : props) {
+            cmd.append("setprop ").append(p[0]).append(' ').append(p[1]).append("; ");
         }
-        refreshStatus();
+        try {
+            Process process = new ProcessBuilder("su", "-c", cmd.toString())
+                    .redirectErrorStream(true)
+                    .start();
+            return process.waitFor() == 0;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     private void resetDefaults() {

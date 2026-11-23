@@ -93,29 +93,40 @@ adb shell getprop | grep gnssspoof
 
 ## 卫星数量调节
 
+打开桌面上的 **GnssSpoof** 图标即可调参：启用开关、数量模式（波动/固定）、波动区间、
+参与定位颗数，保存后约 3 秒生效，不需要重启。界面顶部还会实时显示注入状态与当前实际颗数。
+
 卫星表由 `SvTableGenerator` 按物理模型生成（仰角球面分布、载噪比随仰角变化、卫星缓慢进出），
-默认在 58–82 颗之间波动。全部参数走系统属性，改完 3 秒内生效，**不需要重启**：
+默认在 58–82 颗之间波动。
+
+### 用 adb 调（可选）
+
+界面保存写的是 `persist.gnssspoof.*`（重启后保留）。也可以用 adb 临时覆盖，
+优先级：`persist.*` > `debug.*` > 代码默认值。
 
 ```bash
 # 总开关：0 = 透传真实卫星数据（用于对照），1 = 伪造
-adb shell su -c 'setprop debug.gnssspoof.enable 1'
+adb shell su -c 'setprop persist.gnssspoof.enable 1'
 
 # 固定颗数（设了就停止波动）
-adb shell su -c 'setprop debug.gnssspoof.svcount 67'
+adb shell su -c 'setprop persist.gnssspoof.svcount 67'
 
-# 波动区间（不设 svcount 时生效）
-adb shell su -c 'setprop debug.gnssspoof.svmin 45'
-adb shell su -c 'setprop debug.gnssspoof.svmax 70'
+# 波动区间（svcount 为 0 时生效）
+adb shell su -c 'setprop persist.gnssspoof.svmin 45'
+adb shell su -c 'setprop persist.gnssspoof.svmax 70'
 
 # 参与定位的卫星颗数（其余仅「看得见」）
-adb shell su -c 'setprop debug.gnssspoof.fixcount 22'
+adb shell su -c 'setprop persist.gnssspoof.fixcount 22'
 
-# 查看当前实际颗数
+# 查看钩子实际采用的配置与当前颗数
+adb shell getprop debug.gnssspoof.cfg
 adb shell getprop debug.gnssspoof.svcount_live
 ```
 
 > 真实环境参考：开阔地多星座合计常见 60–80 颗，室内通常只有 30 余颗。
 > 如果在室内使用较多，把区间调到 45–70 更不容易显眼。
+>
+> 界面保存需要 root 授权（首次会弹 KernelSU / Magisk 的授权框）。
 
 ## 免责声明
 
