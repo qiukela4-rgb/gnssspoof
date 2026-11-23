@@ -84,7 +84,7 @@ public class MainHook implements IXposedHookLoadPackage {
             }
 
             // 通道 3：主动推送（虚拟定位停掉 GNSS 上报时的救命通道）
-            // App 注册卫星回调(addListener)时，立刻主动把 16 颗假卫星推给它
+            // App 注册卫星回调(addListener)时，立刻主动把 8 颗假卫星推给它
             try {
                 XposedBridge.hookAllMethods(provider, "addListener", new XC_MethodHook() {
                     @Override
@@ -152,7 +152,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                        float[] elev, float[] azim, float[] carrier,
                                        float[] baseband) {
         for (int i = 0; i < n; i++) {
-            svidWithFlags[i] = SvIdCodec.encode(i + 1, 1, SV_SHIFT, CONST_SHIFT, FLAGS_FULL);  // GPS svid 1..16
+            svidWithFlags[i] = SvIdCodec.encode(i + 1, 1, SV_SHIFT, CONST_SHIFT, FLAGS_FULL);  // GPS svid 1..8
             cn0[i] = CN0_BASE + (i % CN0_PERIOD) * CN0_STEP;  // 信噪比 32~38
             elev[i] = ELEVATION;
             azim[i] = (i * AZIMUTH_STEP) % 360.0f;             // 360.0f 为角度圆周（非可调参数），不参与常量区
